@@ -552,14 +552,206 @@ export default function App() {
   const [adminMetrics, setAdminMetrics] = useState(null);
   const [adminUsers, setAdminUsers] = useState([]);
 
+  // Default sample history sessions if backend returns empty or during initial load
+  const defaultSampleSessions = useMemo(() => {
+    const today = new Date();
+    const getIso = (daysAgo) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() - daysAgo);
+      return d.toISOString().split('T')[0];
+    };
+    return [
+      {
+        session_id: 'sess_sample_1',
+        workout_date: getIso(0),
+        timestamp: `${getIso(0)}T07:30:00Z`,
+        exercise_name: 'Push-up Set',
+        exercise_type: 'pushup',
+        predicted_kcal: 185,
+        calories_burned: 185,
+        duration_sec: 420,
+        total_reps: 35,
+        valid_reps: 30,
+        form_score_pct: 94
+      },
+      {
+        session_id: 'sess_sample_2',
+        workout_date: getIso(2),
+        timestamp: `${getIso(2)}T08:15:00Z`,
+        exercise_name: 'Squat Circuit',
+        exercise_type: 'squat',
+        predicted_kcal: 240,
+        calories_burned: 240,
+        duration_sec: 600,
+        total_reps: 45,
+        valid_reps: 40,
+        form_score_pct: 91
+      },
+      {
+        session_id: 'sess_sample_3',
+        workout_date: getIso(4),
+        timestamp: `${getIso(4)}T17:45:00Z`,
+        exercise_name: 'HIIT Cardio',
+        exercise_type: 'jumping_jack',
+        predicted_kcal: 310,
+        calories_burned: 310,
+        duration_sec: 750,
+        total_reps: 80,
+        valid_reps: 75,
+        form_score_pct: 89
+      },
+      {
+        session_id: 'sess_sample_4',
+        workout_date: getIso(6),
+        timestamp: `${getIso(6)}T07:10:00Z`,
+        exercise_name: 'Lower Body Burn',
+        exercise_type: 'lunge',
+        predicted_kcal: 210,
+        calories_burned: 210,
+        duration_sec: 540,
+        total_reps: 40,
+        valid_reps: 36,
+        form_score_pct: 93
+      }
+    ];
+  }, []);
+
   // History & Nutrition State
   const [history, setHistory] = useState([]);
+  const activeSessionsList = useMemo(() => {
+    return (history && Array.isArray(history) && history.length > 0) ? history : defaultSampleSessions;
+  }, [history, defaultSampleSessions]);
+
   const [historyStats, setHistoryStats] = useState(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [waterIntake, setWaterIntake] = useState(1.6);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [workoutSubTab, setWorkoutSubTab] = useState('overview');
   const [trophyIndex, setTrophyIndex] = useState(0);
+
+  // Workout Page Calendar Date Range Calorie Calculator State
+  const [calStartDate, setCalStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().split('T')[0];
+  });
+  const [calEndDate, setCalEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [calSelectMode, setCalSelectMode] = useState('start');
+
+  const rangeFilteredSessions = useMemo(() => {
+    if (!calStartDate || !calEndDate) return activeSessionsList;
+
+    const start = calStartDate <= calEndDate ? calStartDate : calEndDate;
+    const end = calStartDate <= calEndDate ? calEndDate : calStartDate;
+
+    return activeSessionsList.filter(s => {
+      const rawDate = s.workout_date || s.created_at || s.timestamp || s.date || '';
+      if (!rawDate) return false;
+      const dateStr = String(rawDate).split('T')[0];
+      return dateStr >= start && dateStr <= end;
+    });
+  }, [activeSessionsList, calStartDate, calEndDate]);
+
+  const rangeTotalCalories = useMemo(() => {
+    return Math.round(rangeFilteredSessions.reduce((acc, s) => {
+      const kcalVal = parseFloat(s.calories_burned ?? s.predicted_kcal ?? s.kcal ?? 0);
+      return acc + (isNaN(kcalVal) ? 0 : kcalVal);
+    }, 0));
+  }, [rangeFilteredSessions]);
+
+  const rangeTotalDurationMin = useMemo(() => {
+    return Math.round(rangeFilteredSessions.reduce((acc, s) => {
+      const durVal = parseFloat(s.duration_sec ?? s.duration ?? 0);
+      return acc + (isNaN(durVal) ? 0 : durVal);
+    }, 0) / 60);
+  }, [rangeFilteredSessions]);
+
+  const rangeTotalReps = useMemo(() => {
+    return rangeFilteredSessions.reduce((acc, s) => {
+      const repsVal = parseInt(s.valid_reps ?? s.total_reps ?? s.reps ?? 0, 10);
+      return acc + (isNaN(repsVal) ? 0 : repsVal);
+    }, 0);
+  }, [rangeFilteredSessions]);
+
+  const calendarDaysGrid = useMemo(() => {
+    const days = [];
+    const year = 2026;
+    const month = 7; // August (0-indexed)
+    
+    const firstDay = new Date(year, month, 1);
+    const startingDayOfWeek = (firstDay.getDay() + 6) % 7; // Mon=0
+    const totalDaysInMonth = new Date(year, month + 1, 0).getDate();
+    const prevMonthTotalDays = new Date(year, month, 0).getDate();
+
+    for (let i = startingDayOfWeek - 1; i >= 0; i--) {
+      const d = prevMonthTotalDays - i;
+      const dateStr = `${year}-07-${String(d).padStart(2, '0')}`;
+      days.push({ day: d, dateStr, isPrevMonth: true });
+    }
+
+    for (let d = 1; d <= totalDaysInMonth; d++) {
+      const dateStr = `${year}-08-${String(d).padStart(2, '0')}`;
+      const daySessions = activeSessionsList.filter(s => {
+        const rawDate = s.workout_date || s.created_at || s.timestamp || s.date || '';
+        return String(rawDate).startsWith(dateStr);
+      });
+      const hasWorkout = daySessions.length > 0;
+      const dayCalories = daySessions.reduce((sum, s) => sum + parseFloat(s.calories_burned ?? s.predicted_kcal ?? 0), 0);
+      days.push({
+        day: d,
+        dateStr,
+        isCurrentMonth: true,
+        hasWorkout,
+        dayCalories: Math.round(dayCalories),
+        workoutCount: daySessions.length
+      });
+    }
+
+    const remaining = 35 - days.length;
+    for (let d = 1; d <= remaining; d++) {
+      const dateStr = `${year}-09-${String(d).padStart(2, '0')}`;
+      days.push({ day: d, dateStr, isNextMonth: true });
+    }
+
+    return days;
+  }, [activeSessionsList]);
+
+  const handleCalendarDayClick = (dateStr) => {
+    if (!dateStr) return;
+    if (calSelectMode === 'start') {
+      setCalStartDate(dateStr);
+      if (dateStr > calEndDate) {
+        setCalEndDate(dateStr);
+      }
+      setCalSelectMode('end');
+    } else {
+      if (dateStr < calStartDate) {
+        setCalStartDate(dateStr);
+        setCalEndDate(calStartDate);
+      } else {
+        setCalEndDate(dateStr);
+      }
+      setCalSelectMode('start');
+    }
+  };
+
+  const setQuickDateRange = (days) => {
+    const end = new Date().toISOString().split('T')[0];
+    if (days === 'today') {
+      setCalStartDate(end);
+      setCalEndDate(end);
+    } else if (days === 'month') {
+      setCalStartDate('2026-08-01');
+      setCalEndDate(end);
+    } else {
+      const startObj = new Date();
+      startObj.setDate(startObj.getDate() - (days - 1));
+      const start = startObj.toISOString().split('T')[0];
+      setCalStartDate(start);
+      setCalEndDate(end);
+    }
+    setCalSelectMode('start');
+  };
 
   // Indian Meal Planner & Tracker State
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
@@ -3257,58 +3449,127 @@ export default function App() {
 
                   {/* Right Column: Workout Calendar & Program Details */}
                   <div className="space-y-6">
-                    {/* Workout Calendar */}
-                    <div className="card-elevated bg-white p-5 rounded-2xl space-y-4">
+                    {/* Workout Calendar & Calorie Range Calculator */}
+                    <div className="card-elevated bg-white p-5 rounded-2xl space-y-4 border border-slate-100 shadow-sm">
                       <div className="flex items-center justify-between">
-                        <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Workout Calendar</h3>
-                        <span className="text-[10px] font-bold text-slate-400">View Full Calendar</span>
+                        <div>
+                          <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <Calendar size={14} className="text-indigo-600" /> Workout Calendar & Calories
+                          </h3>
+                          <p className="text-[10px] text-slate-500 font-medium">Select start & end date to compute calories burned</p>
+                        </div>
+                        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
+                          Aug 2026
+                        </span>
                       </div>
-                      
-                      <div className="grid grid-cols-7 gap-1.5 text-center text-[10px] font-black text-slate-400 pb-2 border-b border-slate-100/60">
-                        <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
-                      </div>
-                      
-                      <div className="grid grid-cols-7 gap-y-2 gap-x-1.5 text-center text-xs font-bold text-slate-700">
-                        {[
-                          { day: 28, isPrevMonth: true },
-                          { day: 29, isPrevMonth: true },
-                          { day: 30, isPrevMonth: true },
-                          { day: 31, isPrevMonth: true },
-                          { day: 1 }, { day: 2 }, { day: 3 }, { day: 4 },
-                          { day: 5, isCompleted: true }, { day: 6 }, { day: 7 },
-                          { day: 8, isActive: true },
-                          { day: 9 }, { day: 10 }, { day: 11 },
-                          { day: 12, isCompleted: true }, { day: 13 },
-                          { day: 14, isCompleted: true },
-                          { day: 15, isPlanned: true }, { day: 16 }, { day: 17 }, { day: 18 },
-                          { day: 19, isRest: true }, { day: 20 }, { day: 21 }, { day: 22 }, { day: 23 }, { day: 24 },
-                          { day: 25 },
-                          { day: 26, isCompleted: true }, { day: 27 }, { day: 28 }, { day: 29 }, { day: 30 }, { day: 31 }
-                        ].map((d, idx) => (
-                          <div key={idx} className="flex flex-col items-center justify-center h-9">
-                            <div 
-                              className={`w-7 h-7 rounded-full flex items-center justify-center transition ${
-                                d.isActive 
-                                  ? 'bg-indigo-600 text-white shadow-sm' 
-                                  : (d.isPrevMonth ? 'text-slate-300' : 'text-slate-700 hover:bg-slate-50 cursor-pointer')
-                              }`}
-                            >
-                              {d.day}
-                            </div>
-                            {/* Dot indicator below day */}
-                            <div className="h-1.5 flex items-center justify-center">
-                              {d.isCompleted && <span className="w-1 h-1 bg-emerald-500 rounded-full" />}
-                              {d.isPlanned && <span className="w-1 h-1 bg-indigo-500 rounded-full" />}
-                              {d.isRest && <span className="w-1 h-1 bg-amber-500 rounded-full" />}
-                            </div>
+
+                      {/* Date Inputs & Presets */}
+                      <div className="space-y-2.5 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <div className="grid grid-cols-2 gap-2 text-[10px]">
+                          <div>
+                            <label className="block text-slate-500 font-bold mb-1 uppercase text-[9px]">Start Date</label>
+                            <input
+                              type="date"
+                              value={calStartDate}
+                              onChange={(e) => setCalStartDate(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-800 font-bold focus:outline-none focus:border-indigo-500 text-xs"
+                            />
                           </div>
-                        ))}
+                          <div>
+                            <label className="block text-slate-500 font-bold mb-1 uppercase text-[9px]">End Date</label>
+                            <input
+                              type="date"
+                              value={calEndDate}
+                              onChange={(e) => setCalEndDate(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-800 font-bold focus:outline-none focus:border-indigo-500 text-xs"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Quick Presets */}
+                        <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                          <span className="text-[9px] text-slate-400 font-extrabold uppercase">Quick:</span>
+                          <button onClick={() => setQuickDateRange('today')} className="text-[9px] font-extrabold px-2 py-0.5 bg-white hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 border border-slate-200 rounded-md transition">Today</button>
+                          <button onClick={() => setQuickDateRange(7)} className="text-[9px] font-extrabold px-2 py-0.5 bg-white hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 border border-slate-200 rounded-md transition">7 Days</button>
+                          <button onClick={() => setQuickDateRange(15)} className="text-[9px] font-extrabold px-2 py-0.5 bg-white hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 border border-slate-200 rounded-md transition">15 Days</button>
+                          <button onClick={() => setQuickDateRange(30)} className="text-[9px] font-extrabold px-2 py-0.5 bg-white hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 border border-slate-200 rounded-md transition">30 Days</button>
+                          <button onClick={() => setQuickDateRange('month')} className="text-[9px] font-extrabold px-2 py-0.5 bg-white hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 border border-slate-200 rounded-md transition">This Month</button>
+                        </div>
                       </div>
-                      
-                      <div className="flex items-center justify-between gap-2 pt-2 text-[9px] font-bold text-slate-400 flex-wrap">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Completed</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-600" /> Planned</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" /> Rest Day</span>
+
+                      {/* CALORIE CALCULATION RESULT BADGE */}
+                      <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 text-white p-4 rounded-xl shadow-md shadow-indigo-600/15 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-indigo-200">
+                            Calories Burned ({calStartDate} to {calEndDate})
+                          </span>
+                          <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-orange-300">
+                            <Flame size={16} />
+                          </div>
+                        </div>
+                        <div className="flex items-baseline gap-2">
+                          <strong className="text-3xl font-black tracking-tight">{rangeTotalCalories}</strong>
+                          <span className="text-xs font-bold text-indigo-200">kcal total</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/15 text-[10px] font-bold text-indigo-100">
+                          <div>
+                            <span className="block text-[8px] text-indigo-300 uppercase">Workouts</span>
+                            <strong>{rangeFilteredSessions.length} sessions</strong>
+                          </div>
+                          <div>
+                            <span className="block text-[8px] text-indigo-300 uppercase">Duration</span>
+                            <strong>{rangeTotalDurationMin} min</strong>
+                          </div>
+                          <div>
+                            <span className="block text-[8px] text-indigo-300 uppercase">Total Reps</span>
+                            <strong>{rangeTotalReps} reps</strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Interactive Calendar Days Grid */}
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-black text-slate-400 pb-1 border-b border-slate-100">
+                          <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+                        </div>
+
+                        <div className="grid grid-cols-7 gap-y-1.5 gap-x-1 text-center text-xs font-bold text-slate-700">
+                          {calendarDaysGrid.map((d, idx) => {
+                            const isStart = d.dateStr === calStartDate;
+                            const isEnd = d.dateStr === calEndDate;
+                            const isRange = d.dateStr >= (calStartDate <= calEndDate ? calStartDate : calEndDate) && 
+                                            d.dateStr <= (calStartDate <= calEndDate ? calEndDate : calStartDate);
+
+                            return (
+                              <div key={idx} className="flex flex-col items-center justify-center h-9">
+                                <button
+                                  onClick={() => handleCalendarDayClick(d.dateStr)}
+                                  title={d.hasWorkout ? `${d.dayCalories} kcal (${d.workoutCount} workouts)` : d.dateStr}
+                                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition relative ${
+                                    isStart || isEnd
+                                      ? 'bg-indigo-600 text-white font-black shadow-md scale-105'
+                                      : (isRange 
+                                          ? 'bg-indigo-100 text-indigo-900 border border-indigo-200' 
+                                          : (d.isPrevMonth || d.isNextMonth ? 'text-slate-300' : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-600'))
+                                  }`}
+                                >
+                                  {d.day}
+                                </button>
+                                <div className="h-1.5 flex items-center justify-center mt-0.5">
+                                  {d.hasWorkout && (
+                                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full shadow-sm" />
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="flex items-center justify-between text-[9px] font-bold text-slate-400 pt-1">
+                          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-600" /> Selected Range</span>
+                          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Workout Logged</span>
+                          <span className="text-slate-400 font-normal italic">Click dates to pick range</span>
+                        </div>
                       </div>
                     </div>
 
