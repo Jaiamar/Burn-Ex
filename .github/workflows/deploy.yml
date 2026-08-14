@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 jobs:
@@ -14,7 +13,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+<<<<<<< HEAD
       - name: Deploy Backend + Frontend to EC2
+=======
+      - name: Deploy to EC2 via SSH
+>>>>>>> 5925499 (Fix frontend-backend API integration and deployment updates)
         uses: appleboy/ssh-action@v1.2.0
 
         with:
@@ -24,12 +27,17 @@ jobs:
           port: 22
 
           timeout: 30s
+<<<<<<< HEAD
           command_timeout: 40m
+=======
+          command_timeout: 45m
+>>>>>>> 5925499 (Fix frontend-backend API integration and deployment updates)
 
           script: |
             set -Eeuo pipefail
 
             echo "=================================================="
+<<<<<<< HEAD
             echo "          BURN-EX CI/CD DEPLOYMENT"
             echo "=================================================="
 
@@ -175,8 +183,59 @@ jobs:
 
             git fetch origin main
 
-            git reset --hard origin/main
+=======
+            echo "          Burn-Ex CI/CD Deployment Starting"
+            echo "=================================================="
 
+            echo ">>> [1/9] Checking Required System Commands"
+            for cmd in node npm curl python3; do
+              if ! command -v "$cmd" &>/dev/null; then
+                echo "ERROR: Required command '$cmd' is missing."
+                exit 1
+              fi
+            done
+
+            if ! command -v lsof &>/dev/null; then
+              echo "lsof is missing. Attempting to install lsof..."
+              sudo apt-get update -qq && sudo apt-get install -y -qq lsof || true
+            fi
+
+            echo ">>> [2/9] System Memory and Swap Setup"
+            echo "Current Memory Status:"
+            free -h
+
+            echo "Current Swap Status:"
+            swapon --show || true
+
+            if [ "$(swapon --show | wc -l)" -le 1 ]; then
+              echo "No active swap detected. Creating 4GB swap file at /swapfile..."
+              if [ ! -f /swapfile ]; then
+                sudo fallocate -l 4G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
+                sudo chmod 600 /swapfile
+                sudo mkswap /swapfile
+              fi
+              sudo swapon /swapfile || true
+              if ! grep -q '^/swapfile' /etc/fstab; then
+                echo '/swapfile swap swap defaults 0 0' | sudo tee -a /etc/fstab
+              fi
+              echo "Swap file created and enabled successfully."
+            else
+              echo "Active swap detected. Reusing existing swap."
+            fi
+
+            echo "Updated Memory & Swap Status:"
+            free -h
+            swapon --show || true
+
+            echo ">>> [3/9] Fetching and Resetting Repository Code"
+            cd /home/ubuntu/Burn-Ex
+            git fetch origin main
+>>>>>>> 5925499 (Fix frontend-backend API integration and deployment updates)
+            git reset --hard origin/main
+            CURRENT_COMMIT=$(git rev-parse --short HEAD)
+            echo "Deployed Git Commit: ${CURRENT_COMMIT}"
+
+<<<<<<< HEAD
             echo ""
             echo ">>> Current commit:"
             git rev-parse --short HEAD
@@ -319,10 +378,67 @@ jobs:
 
               cat "$BACKEND_LOG" || true
 
+=======
+            echo ">>> [4/9] Backend Setup and Validation"
+            cd /home/ubuntu/Burn-Ex/backend
+            source /home/ubuntu/Burn-Ex/.venv/bin/activate
+
+            echo "Installing backend requirements..."
+            pip install --no-cache-dir -r requirements.txt
+
+            echo "Verifying backend import..."
+            /home/ubuntu/Burn-Ex/.venv/bin/python -c "from api import app; print('Backend import OK')"
+
+            echo ">>> [5/9] Stopping Old Backend & Starting New Backend"
+            if [ -f /home/ubuntu/burnex-backend.pid ]; then
+              OLD_BACKEND_PID=$(cat /home/ubuntu/burnex-backend.pid)
+              if [ -n "$OLD_BACKEND_PID" ] && kill -0 "$OLD_BACKEND_PID" 2>/dev/null; then
+                echo "Stopping old backend process PID: $OLD_BACKEND_PID..."
+                kill "$OLD_BACKEND_PID" || true
+                sleep 2
+                if kill -0 "$OLD_BACKEND_PID" 2>/dev/null; then
+                  kill -9 "$OLD_BACKEND_PID" 2>/dev/null || true
+                fi
+              fi
+              rm -f /home/ubuntu/burnex-backend.pid
+            fi
+
+            PORT_5000_PID=$(lsof -ti:5000 2>/dev/null || true)
+            if [ -n "$PORT_5000_PID" ]; then
+              echo "Stopping process listening on port 5000 (PID: $PORT_5000_PID)..."
+              kill $PORT_5000_PID 2>/dev/null || true
+              sleep 2
+              lsof -ti:5000 | xargs -r kill -9 2>/dev/null || true
+            fi
+
+            echo "Starting backend Uvicorn service..."
+            nohup /home/ubuntu/Burn-Ex/.venv/bin/uvicorn api:app --host 0.0.0.0 --port 5000 > /home/ubuntu/burnex-backend.log 2>&1 &
+            BACKEND_NEW_PID=$!
+            echo "$BACKEND_NEW_PID" > /home/ubuntu/burnex-backend.pid
+            echo "Backend launched with PID: $BACKEND_NEW_PID"
+
+            echo "Checking backend health on http://127.0.0.1:5000/..."
+            BACKEND_SUCCESS=false
+            for i in {1..10}; do
+              if curl -sf http://127.0.0.1:5000/ > /dev/null 2>&1; then
+                BACKEND_SUCCESS=true
+                break
+              fi
+              sleep 2
+            done
+
+            if [ "$BACKEND_SUCCESS" = true ]; then
+              echo "Backend health check PASSED!"
+            else
+              echo "ERROR: Backend health check FAILED!"
+              echo "==================== BACKEND LOGS ===================="
+              cat /home/ubuntu/burnex-backend.log || true
+>>>>>>> 5925499 (Fix frontend-backend API integration and deployment updates)
               exit 1
 
             fi
 
+<<<<<<< HEAD
             # ==================================================
             # FRONTEND
             # ==================================================
@@ -615,3 +731,86 @@ jobs:
             echo ""
             echo "Deployment completed successfully."
 ```
+=======
+            echo ">>> [6/9] Frontend Dependencies Installation & Build"
+            cd /home/ubuntu/Burn-Ex/frontend
+            
+            echo "Displaying memory state before npm install:"
+            free -h
+            swapon --show || true
+
+            export NODE_OPTIONS="--max-old-space-size=1024"
+
+            if [ -f package-lock.json ]; then
+              echo "Installing frontend dependencies using npm ci..."
+              npm ci --no-audit --no-fund --progress=false
+            else
+              echo "Installing frontend dependencies using npm install..."
+              npm install --no-audit --no-fund --progress=false
+            fi
+
+            echo "Building frontend..."
+            npm run build
+
+            echo "Verifying frontend build output..."
+            if [ ! -f /home/ubuntu/Burn-Ex/frontend/dist/index.html ]; then
+              echo "ERROR: Build failed! /home/ubuntu/Burn-Ex/frontend/dist/index.html is missing."
+              exit 1
+            fi
+            echo "Frontend build verified successfully."
+
+            echo ">>> [7/9] Stopping Old Frontend Service"
+            if [ -f /home/ubuntu/burnex-frontend.pid ]; then
+              OLD_FRONTEND_PID=$(cat /home/ubuntu/burnex-frontend.pid)
+              if [ -n "$OLD_FRONTEND_PID" ] && kill -0 "$OLD_FRONTEND_PID" 2>/dev/null; then
+                echo "Stopping old frontend process PID: $OLD_FRONTEND_PID..."
+                kill "$OLD_FRONTEND_PID" || true
+                sleep 2
+                if kill -0 "$OLD_FRONTEND_PID" 2>/dev/null; then
+                  kill -9 "$OLD_FRONTEND_PID" 2>/dev/null || true
+                fi
+              fi
+              rm -f /home/ubuntu/burnex-frontend.pid
+            fi
+
+            PORT_3000_PID=$(lsof -ti:3000 2>/dev/null || true)
+            if [ -n "$PORT_3000_PID" ]; then
+              echo "Stopping process listening on port 3000 (PID: $PORT_3000_PID)..."
+              kill $PORT_3000_PID 2>/dev/null || true
+              sleep 2
+              lsof -ti:3000 | xargs -r kill -9 2>/dev/null || true
+            fi
+
+            echo ">>> [8/9] Starting New Frontend Service"
+            nohup npx vite preview --host 0.0.0.0 --port 3000 > /home/ubuntu/burnex-frontend.log 2>&1 &
+            FRONTEND_NEW_PID=$!
+            echo "$FRONTEND_NEW_PID" > /home/ubuntu/burnex-frontend.pid
+            echo "Frontend launched with PID: $FRONTEND_NEW_PID"
+
+            echo "Checking frontend health on http://127.0.0.1:3000/..."
+            FRONTEND_SUCCESS=false
+            for i in {1..10}; do
+              if curl -sf http://127.0.0.1:3000/ > /dev/null 2>&1; then
+                FRONTEND_SUCCESS=true
+                break
+              fi
+              sleep 2
+            done
+
+            if [ "$FRONTEND_SUCCESS" = true ]; then
+              echo "Frontend health check PASSED!"
+            else
+              echo "ERROR: Frontend health check FAILED!"
+              echo "==================== FRONTEND LOGS ===================="
+              cat /home/ubuntu/burnex-frontend.log || true
+              exit 1
+            fi
+
+            echo ">>> [9/9] Deployment Completed Successfully"
+            echo "=================================================="
+            echo "      BURN-EX DEPLOYMENT SUCCESSFULLY COMPLETED"
+            echo "=================================================="
+            echo "Git Commit : ${CURRENT_COMMIT}"
+            echo "Backend    : Running on http://127.0.0.1:5000 (PID: $(cat /home/ubuntu/burnex-backend.pid))"
+            echo "Frontend   : Running on http://127.0.0.1:3000 (PID: $(cat /home/ubuntu/burnex-frontend.pid))"
+>>>>>>> 5925499 (Fix frontend-backend API integration and deployment updates)
