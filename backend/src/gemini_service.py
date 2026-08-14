@@ -314,14 +314,15 @@ def get_coach_chat_reply(
 
 def call_gemini(system_instruction: str, contents: list) -> str:
     api_key = os.environ.get("GEMINI_API_KEY")
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-    
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is missing")
-        
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+    configured_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    candidate_models = [configured_model, "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"]
+    seen = set()
+    models_to_try = [m for m in candidate_models if not (m in seen or seen.add(m))]
+
     headers = {"Content-Type": "application/json"}
-    
     payload = {
         "contents": contents,
         "systemInstruction": {
@@ -333,16 +334,25 @@ def call_gemini(system_instruction: str, contents: list) -> str:
             "temperature": 0.3
         }
     }
-    
-    res = requests.post(url, json=payload, headers=headers, timeout=12.0)
-    
-    if res.status_code == 200:
-        data = res.json()
+
+    last_error_text = ""
+    for model in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         try:
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError) as e:
-            print(f"[GeminiService] Failed parsing: {res.text}")
-            raise ValueError("Invalid response format from Gemini API")
-    else:
-        print(f"[GeminiService] Error {res.status_code}: {res.text}")
-        raise ValueError(f"Gemini API returned error code {res.status_code}")
+            res = requests.post(url, json=payload, headers=headers, timeout=12.0)
+            if res.status_code == 200:
+                data = res.json()
+                try:
+                    return data["candidates"][0]["content"]["parts"][0]["text"]
+                except (KeyError, IndexError) as e:
+                    print(f"[GeminiService] Failed parsing model {model} response: {res.text}")
+                    raise ValueError("Invalid response format from Gemini API")
+            else:
+                print(f"[GeminiService] Model {model} returned HTTP {res.status_code}: {res.text}")
+                last_error_text = f"HTTP {res.status_code}: {res.text}"
+        except requests.RequestException as req_err:
+            print(f"[GeminiService] Network exception calling model {model}: {req_err}")
+            last_error_text = str(req_err)
+
+    raise ValueError(f"Gemini API error across all candidate models. Last error: {last_error_text}")
+

@@ -1960,12 +1960,12 @@ def post_ai_coach(data: dict, current_user: dict = Depends(get_current_user)):
         print(f"[AI Coach] Gemini Response: Success")
         return {"status": "success", "reply": reply}
     except Exception as error:
-        # Catch all errors (ValueError, Exception, etc.) and return fallback message
-        print(f"[AI Coach Error]: {error}")
-        return {
-            "status": "success",
-            "reply": "I'm temporarily having trouble connecting to the AI service. Please try again shortly."
-        }
+        print(f"[AI Coach Error]: {error}. Falling back to Local Coach response.")
+        try:
+            reply = local_coach.get_response(msg, latest_session_telemetry)
+        except Exception:
+            reply = "I'm your Burn-Ex AI Coach. Keep up your workout consistency, maintain proper form, and hit your daily calorie targets!"
+        return {"status": "success", "reply": reply}
 
 @app.get("/api/history")
 @app.get("/history")
