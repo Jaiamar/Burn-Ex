@@ -1,0 +1,45 @@
+# BURN-EX: Privacy-Preserving AI Energy Expenditure Tracker
+**Version:** 1.0 (Hackathon Edition)  
+**Target Environment:** Edge / Local Execution (Python 3.10+)  
+**Core Paradigm:** Extract -> Calculate -> Infer -> Render (Zero raw-video storage)
+
+---
+
+## 1. Project Overview
+Burn-Ex is an AI-powered system that estimates a user's physical energy expenditure (calories burned) during exercise. Unlike traditional systems that rely on static MET (Metabolic Equivalent of Task) timers, Burn-Ex uses computer vision to track temporal body-motion features—such as Range of Motion (ROM), repetition velocity, and form quality—to provide a **personalized energy expenditure range**. 
+
+All processing is done locally on the edge, ensuring absolute privacy with zero raw-video storage.
+
+---
+
+## 2. System Architecture
+Burn-Ex operates on a unidirectional data flow pipeline to guarantee low latency and strict privacy.
+
+1. **Vision Layer (MediaPipe):** Captures frames, extracts 33 3D skeletal landmarks, and immediately drops the RGB frame from memory.
+2. **Biomechanics Layer (OpenCV/NumPy):** Calculates joint angles, tracks velocities, and maintains the exercise state machine (Rep counting & Form validation).
+3. **Feature Engineering Layer:** Aggregates temporal data (Avg ROM, Rep Rate, Duration) at the end of a workout set.
+4. **ML Inference Layer (XGBoost):** Passes aggregated features to a pre-trained regression model to output an estimated energy expenditure range (kcal).
+5. **Presentation Layer (OpenCV):** Renders a real-time Heads-Up Display (HUD).
+
+---
+
+## 3. Directory Structure
+```text
+burn_ex/
+├── data/
+│   ├── raw_sessions.csv         # Local datastore for training
+│   └── reference_baselines.csv  # Standard MET values for comparison
+├── models/
+│   └── burn_ex_xgboost.pkl      # Serialized ML model
+├── src/
+│   ├── __init__.py
+│   ├── config.py                # Hyperparameters, confidence thresholds
+│   ├── vision_pipeline.py       # MediaPipe camera integration
+│   ├── biomechanics.py          # Angle math, state machines, form checks
+│   ├── feature_extractor.py     # Aggregates temporal data (velocity, ROM)
+│   ├── ml_engine.py             # XGBoost inference and training scripts
+│   └── ui_renderer.py           # OpenCV HUD and bounding box drawing
+├── main.py                      # Application entry point
+├── requirements.txt             # Dependency lockfile
+└── README.md                    # Project documentation
+4. Tech Stack & DependenciesComputer Vision: opencv-pythonPose Estimation: mediapipe (Google)Machine Learning: xgboost, scikit-learnData Handling & Math: numpy, pandas5. Core Modules & Technical SpecificationsModule 1: src/vision_pipeline.pyResponsibility: Interface with the webcam and extract skeletal data.Inputs: Raw webcam frame (cv2.VideoCapture).Outputs: Normalized MediaPipe landmark coordinates (dictionary mapping joint names to [x, y, z, visibility]).Constraints:Must run at minimum 24 FPS.If tracking is lost, return None and do not crash the pipeline.Privacy Guarantee: cv2 frames must be overwritten in the next loop cycle. Never write frames to disk.Module 2: src/biomechanics.pyResponsibility: Convert abstract landmarks into physical angles and maintain the exercise state machine.Required Math: calculate_angle(a, b, c) using numpy.arctan2 to return an angle between 0-180 degrees.State Machine (Example: Push-up):Joints tracked: Left/Right Shoulder, Elbow, Wrist.Transitions:Elbow Angle > 160° -> State = UPElbow Angle < 90° AND State == UP -> State = DOWNElbow Angle > 160° AND State == DOWN -> Rep += 1, State = UPForm Validation:Joints tracked: Shoulder, Hip, Ankle.Logic: Spine angle must remain between 150° and 180°. If < 150°, flag ERROR: SAGGING HIPS, reject the rep, and update invalid_rep_count.Module 3: src/feature_extractor.pyResponsibility: Track temporal data across a full exercise set to feed the ML model.Feature Schema:Feature NameTypeDescriptionuser_weight_kgFloatBase multiplier for metabolic rateduration_secFloatTotal time of the active settotal_repsIntValid reps + Invalid repsvalid_rep_ratioFloatvalid_reps / total_reps (Form proxy)avg_rom_degFloatAverage Range of Motion (Max angle - Min angle)rep_velocityFloattotal_reps / (duration_sec / 60) (Intensity)Outputs: A Pandas DataFrame row passed to the ML Engine upon set completion.Module 4: src/ml_engine.pyResponsibility: Predict the calorie range.Model Architecture: xgboost.XGBRegressor.Inference Logic:Accepts the feature vector from feature_extractor.py.Outputs a base point prediction (e.g., 5.1 kcal).Applies an uncertainty modifier (e.g., +/- 10%) based on the valid_rep_ratio and tracking confidence.Returns: Tuple (lower_bound, upper_bound).Module 5: src/ui_renderer.pyResponsibility: Draw the HUD on the OpenCV window.Components to Render:Skeleton Overlay: Draw lines connecting joints.Biomechanical Color Coding: Active joint (elbow) is GREEN if form is good, RED if form is flagged.Metrics Panel: Display Reps (Valid/Total), Current Stage (UP/DOWN), and Form Score %.Calorie Panel: Display "Estimated Kcal: X.X - Y.Y" (updates at set completion).Privacy Badge: Render static text: 🔒 LOCAL PROCESSING - ZERO VIDEO STORAGE.6. Execution Flow (main.py)Initialize vision_pipeline, biomechanics, feature_extractor, and load ml_engine.Open cv2.VideoCapture.While Loop (Frame by Frame):Pass frame to vision_pipeline -> Get landmarks.If landmarks exist:Pass to biomechanics -> Update angles, check form, update rep count.Pass angles/timestamps to feature_extractor -> Update session buffer (ROM, velocity).Pass frame + biomechanics state to ui_renderer -> Draw HUD.cv2.imshow('Burn-Ex', frame)Keyboard Interrupts:If key == 'q': End set.Trigger feature_extractor to finalize session features.Pass features to ml_engine.predict().Update UI with final Calorie Range.If key == 'r': Reset counters.If key == 'esc': Safely release camera and terminate program.7. Data Collection Strategy (For Hackathon)To train the XGBoost model, the team must collect a self-generated dataset.Use a standard MET formula to generate the "ground truth" target variable for training:Target Kcal = (MET_Value * Weight_in_kg * Duration_in_hours)Perform sets of Push-ups, Squats, and Jumping Jacks at varying speeds (fast/slow) and varying form qualities (full ROM/half reps).The feature_extractor will save the biomechanical features + the target kcal into data/raw_sessions.csv.Train the XGBoost model on this CSV to map physical motion to the MET baseline.8. Development Guidelines (Strict Rules for AI/Builder)Strict Typing: Use Python type hints (-> float, : list) for all function definitions.Graceful Failure: If a user walks out of frame, the state machine must NOT crash. Pause the timer, retain the rep count, and display TARGET LOST on the UI.No Hardcoding: User weight, exercise type, and camera index should be configurable via command-line arguments or config.py.

@@ -1,0 +1,4 @@
+exercise_type,standard_met,target_ideal_rom_deg,up_threshold_deg,down_threshold_deg
+pushup,8.0,110.0,160.0,80.0
+squat,6.5,110.0,165.0,90.0
+jumping_jack,8.0,120.0,145.0,40.0

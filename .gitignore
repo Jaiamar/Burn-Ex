@@ -1,0 +1,21 @@
+# Python cache files
+**/__pycache__/
+**/*.pyc
+
+# Local SQLite databases
+backend/data/*.db
+backend/data/*.json
+
+# Node modules & build files
+frontend/node_modules/
+frontend/dist/
+
+# Local secrets
+firebase-key.json
+backend/firebase-key.json
+
+# Local environment variables
+.env
+.env.*
+!.env.example
+

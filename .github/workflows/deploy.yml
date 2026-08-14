@@ -1,0 +1,90 @@
+name: Burn-Ex CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy Backend to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          timeout: 30s
+          command_timeout: 20m
+
+          script: |
+            set -e
+
+            echo "======================================"
+            echo "      Burn-Ex CI/CD Deployment"
+            echo "======================================"
+
+            cd /home/ubuntu/Burn-Ex
+
+            echo ">>> Fetching latest code"
+            git fetch origin main
+
+            echo ">>> Resetting to latest main"
+            git reset --hard origin/main
+
+            echo ">>> Activating virtual environment"
+            source /home/ubuntu/Burn-Ex/.venv/bin/activate
+
+            echo ">>> Installing dependencies"
+            cd /home/ubuntu/Burn-Ex/backend
+            pip install --no-cache-dir -r requirements.txt
+
+            echo ">>> Stopping old backend"
+
+            if pgrep -f "uvicorn" > /dev/null; then
+              pkill -9 -f "uvicorn" || true
+              sleep 3
+            fi
+
+            echo ">>> Starting backend"
+
+            nohup /home/ubuntu/Burn-Ex/.venv/bin/uvicorn api:app \
+              --host 0.0.0.0 \
+              --port 5000 \
+              > /home/ubuntu/burnex.log 2>&1 &
+
+            sleep 10
+
+            echo ">>> Running process check"
+
+            if pgrep -f "uvicorn" > /dev/null; then
+              echo "Uvicorn process is running"
+            else
+              echo "Uvicorn failed to start"
+              echo "========== LOGS =========="
+              cat /home/ubuntu/burnex.log
+              exit 1
+            fi
+
+            echo ">>> Health check"
+
+            if curl -f http://127.0.0.1:5000/; then
+              echo ""
+              echo "======================================"
+              echo "       DEPLOYMENT SUCCESSFUL"
+              echo "======================================"
+            else
+              echo ""
+              echo "======================================"
+              echo "       DEPLOYMENT FAILED"
+              echo "======================================"
+              echo "========== LOGS =========="
+              cat /home/ubuntu/burnex.log
+              exit 1
+            fi
