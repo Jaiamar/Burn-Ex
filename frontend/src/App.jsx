@@ -890,8 +890,6 @@ export default function App() {
     if (authLoading) return;
     if (!auth) return;
     checkAndLoadProfile();
-    fetchLeaderboard();
-    fetchHistory();
   }, [authLoading, auth]);
 
   // Personalize coach greeting message once profile resolves
@@ -943,18 +941,11 @@ export default function App() {
     try {
       const res = await authenticatedFetch(`${API_BASE}/api/profile`);
 
-      // Handle 401 with a single token-refresh retry before giving up
+      // Handle 401: clear invalid session and return user to login cleanly
       if (res.status === 401) {
-        console.warn('[BX] /api/profile returned 401 — refreshing token and retrying once.');
-        const retryRes = await authenticatedFetch(`${API_BASE}/api/profile`);
-        if (!retryRes.ok) {
-          console.error('[BX] Still 401 after token refresh — displaying error screen.');
-          setProfileFetchError('Unable to authenticate your session. Please sign in again.');
-          return;
-        }
-        const retryData = await retryRes.json();
-        profileCacheTimeRef.current = Date.now();
-        _applyProfile(retryData);
+        console.warn('[BX Auth] /api/profile returned 401 — clearing invalid session.');
+        await handleLogout();
+        setAuthError('Your session has expired. Please sign in again.');
         return;
       }
 
@@ -1026,7 +1017,9 @@ export default function App() {
     try {
       const checkRes = await authenticatedFetch(`${API_BASE}/api/profile/check`, { method: 'POST', retries: 1 });
       if (checkRes.status === 401) {
-        setProfileFetchError('Unable to authenticate your session. Please sign in again.');
+        console.warn('[BX Auth] 401 response during profile check. Clearing invalid session.');
+        await handleLogout();
+        setAuthError('Your session has expired. Please sign in again.');
         return;
       }
       if (!checkRes.ok) {
@@ -1169,8 +1162,10 @@ export default function App() {
   };
 
   const fetchWeeklyPlan = async () => {
+    if (!auth) return;
     try {
       const res = await authenticatedFetch(`${API_BASE}/api/generate-plan`);
+      if (res.status === 401) return;
       const data = await res.json();
       if (data.status === 'success') {
         setWeeklyPlan(data.plan);
@@ -1181,8 +1176,10 @@ export default function App() {
   };
 
   const fetchCircuit = async () => {
+    if (!auth) return;
     try {
       const res = await authenticatedFetch(`${API_BASE}/api/workout/circuit`);
+      if (res.status === 401) return;
       const data = await res.json();
       if (data.status === 'success') {
         setActiveCircuit(data.circuit);
@@ -1194,9 +1191,17 @@ export default function App() {
   };
 
   const fetchLeaderboard = async (type = 'global') => {
+    if (!auth) return;
     setLeaderboardLoading(true);
     try {
       const res = await authenticatedFetch(`${API_BASE}/api/leaderboard?type=${type}`);
+      if (res.status === 401) {
+        console.warn('[BX Auth] /api/leaderboard returned 401.');
+        await handleLogout();
+        setAuthError('Your session has expired. Please sign in again.');
+        return;
+      }
+      if (!res.ok) return;
       const data = await res.json();
       if (data.status === 'success') {
         setLeaderboard(data.leaderboard);
@@ -1209,9 +1214,11 @@ export default function App() {
   };
 
   const fetchAchievements = async () => {
+    if (!auth) return;
     setAchievementsLoading(true);
     try {
       const res = await authenticatedFetch(`${API_BASE}/api/achievements`);
+      if (res.status === 401) return;
       const data = await res.json();
       if (data.status === 'success') {
         setAchievements(data.achievements);
@@ -1224,6 +1231,7 @@ export default function App() {
   };
 
   const fetchHistory = async (force = false) => {
+    if (!auth) return;
     if (!force && history && (Date.now() - historyCacheTimeRef.current < CACHE_TTL_MS)) {
       console.log('[BX Cache] Using cached history data.');
       return;
@@ -1231,6 +1239,13 @@ export default function App() {
     setHistoryLoading(true);
     try {
       const res = await authenticatedFetch(`${API_BASE}/api/history`);
+      if (res.status === 401) {
+        console.warn('[BX Auth] /api/history returned 401.');
+        await handleLogout();
+        setAuthError('Your session has expired. Please sign in again.');
+        return;
+      }
+      if (!res.ok) return;
       const data = await res.json();
       if (data.status === 'success') {
         historyCacheTimeRef.current = Date.now();

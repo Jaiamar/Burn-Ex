@@ -276,11 +276,9 @@ export async function authenticatedFetch(url, options = {}) {
 
   const { forceRefresh = false, retries = 2, ...fetchOptions } = options;
 
-  // Always get a fresh ID token — Firebase returns the cached one if it is
-  // still valid (>5 min remaining) or transparently refreshes it if not.
-  const idToken = await getIdToken(forceRefresh);
+  let idToken = await getIdToken(forceRefresh);
 
-  const requestHeaders = {
+  let requestHeaders = {
     'Content-Type': 'application/json',
     ...fetchOptions.headers,
     'Authorization': `Bearer ${idToken}`,
@@ -296,6 +294,26 @@ export async function authenticatedFetch(url, options = {}) {
         ...fetchOptions,
         headers: requestHeaders,
       });
+
+      // Handle 401 Unauthorized by force refreshing Firebase token ONCE and retrying
+      if (response.status === 401 && !forceRefresh && attempt === 0) {
+        console.warn(`[BX Auth] Received 401 from ${url}. Force refreshing Firebase ID token and retrying...`);
+        try {
+          idToken = await getIdToken(true);
+          requestHeaders = {
+            ...requestHeaders,
+            'Authorization': `Bearer ${idToken}`,
+          };
+          const retryResponse = await fetch(url, {
+            ...fetchOptions,
+            headers: requestHeaders,
+          });
+          return retryResponse;
+        } catch (refreshErr) {
+          console.error('[BX Auth] Token force refresh failed:', refreshErr);
+          return response;
+        }
+      }
 
       return response;
     } catch (err) {

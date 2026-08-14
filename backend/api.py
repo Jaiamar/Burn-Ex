@@ -289,7 +289,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         # Secondary fallback: Decode JWT claims cleanly if google-auth audience or clock drift failed
         try:
             import jwt
-            unverified = jwt.decode(token, options={"verify_signature": False})
+            unverified = jwt.decode(token, options={"verify_signature": False}, algorithms=["RS256", "HS256"])
             uid = unverified.get("user_id") or unverified.get("sub")
             if uid:
                 email = unverified.get("email")
@@ -1756,6 +1756,9 @@ def get_user_stats(current_user: dict = Depends(get_current_user)):
     }
 
 @app.get("/api/leaderboard")
+@app.get("/leaderboard")
+@app.get("/api/board")
+@app.get("/board")
 def get_leaderboard(type: str = "global", current_user: dict = Depends(get_current_user)):
     data = get_leaderboards(type)
     return {"status": "success", "leaderboard": data}
@@ -1963,31 +1966,6 @@ def post_ai_coach(data: dict, current_user: dict = Depends(get_current_user)):
             "status": "success",
             "reply": "I'm temporarily having trouble connecting to the AI service. Please try again shortly."
         }
-
-@app.get("/api/leaderboard")
-@app.get("/leaderboard")
-def get_leaderboard():
-    leaderboard = get_leaderboard_data()
-    return {"status": "success", "leaderboard": leaderboard}
-
-@app.get("/api/achievements")
-@app.get("/achievements")
-def get_achievements(current_user: dict = Depends(get_current_user)):
-    """Retrieve unlocked and locked achievements for athlete."""
-    uid = current_user["uid"]
-    profile = get_db_doc("users", uid) or {}
-    unlocked_ids = profile.get("achievements", [])
-    
-    ach_list = []
-    for ach_id, ach_info in ACHIEVEMENTS_DEFS.items():
-        ach_list.append({
-            "id": ach_id,
-            "name": ach_info["name"],
-            "description": ach_info["description"],
-            "unlocked": ach_id in unlocked_ids
-        })
-        
-    return {"status": "success", "achievements": ach_list}
 
 @app.get("/api/history")
 @app.get("/history")
