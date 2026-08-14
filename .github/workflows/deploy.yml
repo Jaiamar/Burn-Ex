@@ -1,4 +1,3 @@
-yaml
 name: Burn-Ex CI/CD
 
 on:
@@ -16,12 +15,12 @@ jobs:
     steps:
       - name: Deploy Backend and Frontend to EC2
         uses: appleboy/ssh-action@v1.2.0
+
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-
           timeout: 30s
           command_timeout: 30m
 
@@ -40,151 +39,119 @@ jobs:
             BACKEND_PORT=5000
             FRONTEND_PORT=3000
 
-            BACKEND_PID_FILE="/home/ubuntu/burnex-backend.pid"
-            FRONTEND_PID_FILE="/home/ubuntu/burnex-frontend.pid"
-
             BACKEND_LOG="/home/ubuntu/burnex-backend.log"
             FRONTEND_LOG="/home/ubuntu/burnex-frontend.log"
 
-            # ==================================================
-            # CHECK PROJECT
-            # ==================================================
+            BACKEND_PID_FILE="/home/ubuntu/burnex-backend.pid"
+            FRONTEND_PID_FILE="/home/ubuntu/burnex-frontend.pid"
 
             echo ""
-            echo ">>> Checking project"
+            echo ">>> Checking project directories"
 
-            if [ ! -d "$PROJECT" ]; then
-              echo "ERROR: Project directory not found:"
-              echo "$PROJECT"
+            test -d "$PROJECT" || {
+              echo "ERROR: $PROJECT not found"
               exit 1
-            fi
+            }
 
-            if [ ! -d "$BACKEND" ]; then
-              echo "ERROR: Backend directory not found:"
-              echo "$BACKEND"
+            test -d "$BACKEND" || {
+              echo "ERROR: Backend folder not found"
               exit 1
-            fi
+            }
 
-            if [ ! -d "$FRONTEND" ]; then
-              echo "ERROR: Frontend directory not found:"
-              echo "$FRONTEND"
+            test -d "$FRONTEND" || {
+              echo "ERROR: Frontend folder not found"
               exit 1
-            fi
+            }
+
+            test -d "$VENV" || {
+              echo "ERROR: Python virtual environment not found"
+              exit 1
+            }
+
+            test -f "$BACKEND/api.py" || {
+              echo "ERROR: backend/api.py not found"
+              exit 1
+            }
+
+            test -f "$BACKEND/requirements.txt" || {
+              echo "ERROR: backend/requirements.txt not found"
+              exit 1
+            }
+
+            test -f "$FRONTEND/package.json" || {
+              echo "ERROR: frontend/package.json not found"
+              exit 1
+            }
 
             cd "$PROJECT"
 
-            # ==================================================
-            # UPDATE CODE
-            # ==================================================
-
             echo ""
-            echo ">>> Updating source code"
+            echo "=============================================="
+            echo "             UPDATING SOURCE CODE"
+            echo "=============================================="
 
             git fetch origin main
             git reset --hard origin/main
-            git clean -fd
 
             echo ""
             echo ">>> Current commit:"
             git rev-parse --short HEAD
-
-            # ==================================================
-            # CHECK PYTHON ENVIRONMENT
-            # ==================================================
 
             echo ""
             echo "=============================================="
             echo "              BACKEND DEPLOYMENT"
             echo "=============================================="
 
-            if [ ! -d "$VENV" ]; then
-              echo "ERROR: Virtual environment not found:"
-              echo "$VENV"
-              exit 1
-            fi
-
-            if [ ! -f "$BACKEND/api.py" ]; then
-              echo "ERROR: backend/api.py not found"
-              exit 1
-            fi
+            cd "$BACKEND"
 
             echo ">>> Activating Python virtual environment"
 
             source "$VENV/bin/activate"
 
-            echo ">>> Python:"
+            echo ">>> Python version"
             python --version
 
-            echo ">>> Pip:"
-            pip --version
-
-            # ==================================================
-            # BACKEND DEPENDENCIES
-            # ==================================================
-
-            echo ""
             echo ">>> Installing backend dependencies"
-
-            cd "$BACKEND"
 
             pip install --no-cache-dir -r requirements.txt
 
-            # ==================================================
-            # BACKEND STARTUP TEST
-            # ==================================================
+            echo ">>> Testing backend import"
+
+            python -c "from api import app; print('Backend import OK')"
 
             echo ""
-            echo ">>> Testing backend configuration"
-
-            "$VENV/bin/python" -c "from api import app; print('Backend import OK')"
-
-            # ==================================================
-            # STOP OLD BACKEND
-            # ==================================================
-
-            echo ""
-            echo ">>> Stopping previous backend"
+            echo ">>> Stopping old backend"
 
             if [ -f "$BACKEND_PID_FILE" ]; then
-              OLD_BACKEND_PID=$(cat "$BACKEND_PID_FILE" || true)
+              OLD_BACKEND_PID=$(cat "$BACKEND_PID_FILE" 2>/dev/null || true)
 
-              if [ -n "$OLD_BACKEND_PID" ] && kill -0 "$OLD_BACKEND_PID" 2>/dev/null; then
-                echo "Stopping backend PID: $OLD_BACKEND_PID"
-                kill "$OLD_BACKEND_PID" || true
-
-                sleep 3
-
+              if [ -n "$OLD_BACKEND_PID" ]; then
                 if kill -0 "$OLD_BACKEND_PID" 2>/dev/null; then
-                  echo "Force stopping backend PID: $OLD_BACKEND_PID"
-                  kill -9 "$OLD_BACKEND_PID" || true
+                  echo "Stopping backend PID: $OLD_BACKEND_PID"
+                  kill "$OLD_BACKEND_PID" || true
+                  sleep 3
+
+                  if kill -0 "$OLD_BACKEND_PID" 2>/dev/null; then
+                    kill -9 "$OLD_BACKEND_PID" || true
+                  fi
                 fi
               fi
 
               rm -f "$BACKEND_PID_FILE"
             fi
 
-            # ==================================================
-            # CLEAN PORT 5000
-            # ==================================================
-
             echo ""
-            echo ">>> Checking backend port"
+            echo ">>> Cleaning backend port $BACKEND_PORT"
 
-            BACKEND_PIDS=$(lsof -ti :"$BACKEND_PORT" 2>/dev/null || true)
+            BACKEND_PORT_PIDS=$(lsof -ti:"$BACKEND_PORT" 2>/dev/null || true)
 
-            if [ -n "$BACKEND_PIDS" ]; then
-              echo "Cleaning processes using port $BACKEND_PORT"
-
-              for PID in $BACKEND_PIDS; do
+            if [ -n "$BACKEND_PORT_PIDS" ]; then
+              for PID in $BACKEND_PORT_PIDS; do
                 kill "$PID" || true
               done
 
-              sleep 2
+              sleep 3
             fi
-
-            # ==================================================
-            # START BACKEND
-            # ==================================================
 
             echo ""
             echo ">>> Starting backend"
@@ -200,40 +167,35 @@ jobs:
 
             echo "Backend PID: $BACKEND_PID"
 
-            # ==================================================
-            # BACKEND HEALTH CHECK
-            # ==================================================
-
             echo ""
             echo ">>> Waiting for backend"
 
             BACKEND_READY=false
 
-            for i in {1..15}; do
-              if curl -fsS "http://127.0.0.1:$BACKEND_PORT/" > /dev/null 2>&1; then
+            for i in {1..20}; do
+              if curl -fsS \
+                "http://127.0.0.1:$BACKEND_PORT/" \
+                > /dev/null 2>&1; then
+
                 BACKEND_READY=true
+                echo "Backend is ready"
                 break
               fi
 
-              echo "Backend not ready yet... attempt $i/15"
+              echo "Backend starting... $i/20"
               sleep 2
             done
 
             if [ "$BACKEND_READY" != "true" ]; then
               echo ""
-              echo "ERROR: Backend failed health check"
               echo "=============================================="
-              echo "BACKEND LOG"
+              echo "              BACKEND FAILED"
               echo "=============================================="
+
               cat "$BACKEND_LOG" || true
+
               exit 1
             fi
-
-            echo ">>> Backend is healthy"
-
-            # ==================================================
-            # FRONTEND DEPLOYMENT
-            # ==================================================
 
             echo ""
             echo "=============================================="
@@ -242,27 +204,23 @@ jobs:
 
             cd "$FRONTEND"
 
-            if [ ! -f package.json ]; then
-              echo "ERROR: frontend/package.json not found"
-              exit 1
-            fi
+            echo ">>> Checking Node.js"
 
-            echo ">>> Node version"
-
-            if ! command -v node >/dev/null 2>&1; then
-              echo "ERROR: Node.js is not installed on EC2"
-              echo "Install Node.js before running this deployment."
+            command -v node >/dev/null 2>&1 || {
+              echo "ERROR: Node.js is not installed"
               exit 1
-            fi
+            }
 
             node --version
 
-            echo ">>> npm version"
-            npm --version
+            echo ">>> Checking npm"
 
-            # ==================================================
-            # INSTALL FRONTEND DEPENDENCIES
-            # ==================================================
+            command -v npm >/dev/null 2>&1 || {
+              echo "ERROR: npm is not installed"
+              exit 1
+            }
+
+            npm --version
 
             echo ""
             echo ">>> Installing frontend dependencies"
@@ -273,81 +231,59 @@ jobs:
               npm install
             fi
 
-            # ==================================================
-            # BUILD FRONTEND
-            # ==================================================
-
             echo ""
             echo ">>> Building frontend"
 
             npm run build
 
-            # ==================================================
-            # CHECK BUILD
-            # ==================================================
-
             echo ""
             echo ">>> Checking frontend build"
 
-            if [ ! -d "$FRONTEND/dist" ]; then
-              echo "ERROR: dist directory was not created"
+            test -d "$FRONTEND/dist" || {
+              echo "ERROR: dist folder was not created"
               exit 1
-            fi
+            }
 
-            if [ ! -f "$FRONTEND/dist/index.html" ]; then
+            test -f "$FRONTEND/dist/index.html" || {
               echo "ERROR: dist/index.html was not created"
               exit 1
-            fi
+            }
 
             echo "Frontend build successful"
 
-            # ==================================================
-            # STOP OLD FRONTEND
-            # ==================================================
-
             echo ""
-            echo ">>> Stopping previous frontend"
+            echo ">>> Stopping old frontend"
 
             if [ -f "$FRONTEND_PID_FILE" ]; then
-              OLD_FRONTEND_PID=$(cat "$FRONTEND_PID_FILE" || true)
+              OLD_FRONTEND_PID=$(cat "$FRONTEND_PID_FILE" 2>/dev/null || true)
 
-              if [ -n "$OLD_FRONTEND_PID" ] && kill -0 "$OLD_FRONTEND_PID" 2>/dev/null; then
-                echo "Stopping frontend PID: $OLD_FRONTEND_PID"
-                kill "$OLD_FRONTEND_PID" || true
-
-                sleep 3
-
+              if [ -n "$OLD_FRONTEND_PID" ]; then
                 if kill -0 "$OLD_FRONTEND_PID" 2>/dev/null; then
-                  echo "Force stopping frontend PID: $OLD_FRONTEND_PID"
-                  kill -9 "$OLD_FRONTEND_PID" || true
+                  echo "Stopping frontend PID: $OLD_FRONTEND_PID"
+                  kill "$OLD_FRONTEND_PID" || true
+                  sleep 3
+
+                  if kill -0 "$OLD_FRONTEND_PID" 2>/dev/null; then
+                    kill -9 "$OLD_FRONTEND_PID" || true
+                  fi
                 fi
               fi
 
               rm -f "$FRONTEND_PID_FILE"
             fi
 
-            # ==================================================
-            # CLEAN PORT 3000
-            # ==================================================
-
             echo ""
-            echo ">>> Checking frontend port"
+            echo ">>> Cleaning frontend port $FRONTEND_PORT"
 
-            FRONTEND_PIDS=$(lsof -ti :"$FRONTEND_PORT" 2>/dev/null || true)
+            FRONTEND_PORT_PIDS=$(lsof -ti:"$FRONTEND_PORT" 2>/dev/null || true)
 
-            if [ -n "$FRONTEND_PIDS" ]; then
-              echo "Cleaning processes using port $FRONTEND_PORT"
-
-              for PID in $FRONTEND_PIDS; do
+            if [ -n "$FRONTEND_PORT_PIDS" ]; then
+              for PID in $FRONTEND_PORT_PIDS; do
                 kill "$PID" || true
               done
 
-              sleep 2
+              sleep 3
             fi
-
-            # ==================================================
-            # START FRONTEND
-            # ==================================================
 
             echo ""
             echo ">>> Starting frontend"
@@ -363,44 +299,61 @@ jobs:
 
             echo "Frontend PID: $FRONTEND_PID"
 
-            # ==================================================
-            # FRONTEND HEALTH CHECK
-            # ==================================================
-
             echo ""
             echo ">>> Waiting for frontend"
 
             FRONTEND_READY=false
 
-            for i in {1..15}; do
-              if curl -fsS "http://127.0.0.1:$FRONTEND_PORT/" > /dev/null 2>&1; then
+            for i in {1..20}; do
+              if curl -fsS \
+                "http://127.0.0.1:$FRONTEND_PORT/" \
+                > /dev/null 2>&1; then
+
                 FRONTEND_READY=true
+                echo "Frontend is ready"
                 break
               fi
 
-              echo "Frontend not ready yet... attempt $i/15"
+              echo "Frontend starting... $i/20"
               sleep 2
             done
 
             if [ "$FRONTEND_READY" != "true" ]; then
               echo ""
-              echo "ERROR: Frontend failed health check"
               echo "=============================================="
-              echo "FRONTEND LOG"
+              echo "              FRONTEND FAILED"
               echo "=============================================="
+
               cat "$FRONTEND_LOG" || true
+
               exit 1
             fi
 
-            echo ">>> Frontend is healthy"
+            echo ""
+            echo "=============================================="
+            echo "             FINAL HEALTH CHECK"
+            echo "=============================================="
 
-            # ==================================================
-            # FINAL CHECK
-            # ==================================================
+            echo ">>> Backend health check"
+
+            curl -fsS \
+              "http://127.0.0.1:$BACKEND_PORT/" \
+              > /dev/null
+
+            echo "Backend: OK"
+
+            echo ""
+            echo ">>> Frontend health check"
+
+            curl -fsS \
+              "http://127.0.0.1:$FRONTEND_PORT/" \
+              > /dev/null
+
+            echo "Frontend: OK"
 
             echo ""
             echo "=============================================="
-            echo "              DEPLOYMENT SUCCESSFUL"
+            echo "          DEPLOYMENT SUCCESSFUL"
             echo "=============================================="
 
             echo ""
@@ -412,13 +365,14 @@ jobs:
             echo "http://127.0.0.1:$FRONTEND_PORT"
 
             echo ""
-            echo "Backend PID:"
-            cat "$BACKEND_PID_FILE"
+            echo "Backend log:"
+            echo "$BACKEND_LOG"
 
             echo ""
-            echo "Frontend PID:"
-            cat "$FRONTEND_PID_FILE"
+            echo "Frontend log:"
+            echo "$FRONTEND_LOG"
 
             echo ""
-            echo ">>> Deployment completed successfully"
-
+            echo "=============================================="
+            echo "          BURN-EX DEPLOYMENT DONE"
+            echo "=============================================="
