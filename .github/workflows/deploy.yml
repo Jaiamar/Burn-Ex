@@ -9,7 +9,7 @@ on:
 
 jobs:
   deploy:
-    name: Deploy Backend to EC2
+    name: Deploy Burn-Ex to EC2
     runs-on: ubuntu-latest
 
     steps:
@@ -21,7 +21,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
           timeout: 30s
-          command_timeout: 20m
+          command_timeout: 30m
 
           script: |
             set -e
@@ -32,59 +32,81 @@ jobs:
 
             cd /home/ubuntu/Burn-Ex
 
-            echo ">>> Fetching latest code"
+            echo ">>> Pulling latest code"
             git fetch origin main
-
-            echo ">>> Resetting to latest main"
             git reset --hard origin/main
 
-            echo ">>> Activating virtual environment"
+            ########################################
+            # Backend Deployment
+            ########################################
+
+            echo ">>> Activating Python Virtual Environment"
             source /home/ubuntu/Burn-Ex/.venv/bin/activate
 
-            echo ">>> Installing dependencies"
+            echo ">>> Installing Backend Dependencies"
             cd /home/ubuntu/Burn-Ex/backend
             pip install --no-cache-dir -r requirements.txt
 
-            echo ">>> Stopping old backend"
+            echo ">>> Stopping Old Backend"
 
-            if pgrep -f "uvicorn" > /dev/null; then
-              pkill -9 -f "uvicorn" || true
-              sleep 3
-            fi
+            pkill -f "uvicorn" || true
+            sleep 3
 
-            echo ">>> Starting backend"
+            echo ">>> Starting Backend"
 
             nohup /home/ubuntu/Burn-Ex/.venv/bin/uvicorn api:app \
               --host 0.0.0.0 \
               --port 5000 \
-              > /home/ubuntu/burnex.log 2>&1 &
+              > /home/ubuntu/burnex-backend.log 2>&1 &
+
+            ########################################
+            # Frontend Deployment
+            ########################################
+
+            echo ">>> Deploying Frontend"
+
+            cd /home/ubuntu/Burn-Ex/frontend
+
+            npm install
+
+            echo ">>> Building React/Vite App"
+            npm run build
+
+            echo ">>> Restarting Frontend"
+
+            pkill -f "vite" || true
+            pkill -f "serve -s dist" || true
+
+            nohup npx serve -s dist -l 3000 \
+              > /home/ubuntu/burnex-frontend.log 2>&1 &
+
+            ########################################
+            # Health Checks
+            ########################################
 
             sleep 10
 
-            echo ">>> Running process check"
-
-            if pgrep -f "uvicorn" > /dev/null; then
-              echo "Uvicorn process is running"
-            else
-              echo "Uvicorn failed to start"
-              echo "========== LOGS =========="
-              cat /home/ubuntu/burnex.log
-              exit 1
-            fi
-
-            echo ">>> Health check"
+            echo ">>> Checking Backend"
 
             if curl -f http://127.0.0.1:5000/; then
-              echo ""
-              echo "======================================"
-              echo "       DEPLOYMENT SUCCESSFUL"
-              echo "======================================"
+              echo "Backend OK"
             else
-              echo ""
-              echo "======================================"
-              echo "       DEPLOYMENT FAILED"
-              echo "======================================"
-              echo "========== LOGS =========="
-              cat /home/ubuntu/burnex.log
+              echo "Backend Failed"
+              cat /home/ubuntu/burnex-backend.log
               exit 1
             fi
+
+            echo ">>> Checking Frontend"
+
+            if curl -f http://127.0.0.1:3000/; then
+              echo "Frontend OK"
+            else
+              echo "Frontend Failed"
+              cat /home/ubuntu/burnex-frontend.log
+              exit 1
+            fi
+
+            echo ""
+            echo "======================================"
+            echo "      DEPLOYMENT SUCCESSFUL"
+            echo "======================================"
